@@ -1,7 +1,7 @@
 
 # Setting up a test setup for SASL/passkeys
 
-stephen.farrell@cs.tcd.ie, 2025-03-12
+stephen.farrell@cs.tcd.ie, 2025-03-13
 work-in-progress
 
 As part of the work on
@@ -9,10 +9,11 @@ As part of the work on
 and [SASL Passkey](https://datatracker.ietf.org/doc/draft-bucksch-sasl-passkey/),
 I wanted to setup a test environment that wouldn't interere with my daily-driver
 desktop (Ubuntu 24.04), and that allows me to play with an old(ish) Yubikey 4 nano
-I had lying about, (firmware version 4.3.3), so the plan was/is:
+I had lying about, (firmware version 4.3.3), and some new solokeys I recently 
+acquired, so the plan was/is:
 
 - setup a guest VM also running Ubuntu 24.04 with graphics (DONE)
-- figure out how to access the yubikey from the guest (DONE)
+- figure out how to access the yubikey/solokey from the guest (DONE)
 - do some basic tests to see if passkeys demos work there (DONE)
 - setup a test mail setup on the guest (DONE)
 - figure out how to integrate passkeys and rememberme into the mail test setup
@@ -23,10 +24,10 @@ variants. There seem to be many and varied ways in which passkeys/webauthn can
 be used and I'm sure they'll have different wrinkles, so for this to be useful,
 it'll need to be reusable by others. (Hence all the details:-)
 
+## Guest VM creation:
+
 I've used [`debvm`](https://manpages.ubuntu.com/manpages/noble/man1/debvm-create.1.html)
 for setting up and running the guest VM. That ultimately runs [`qemu`](https://www.qemu.org/).
-
-## Guest VM creation:
 
 ```bash
 $ debvm-create --size=20G --release=noble --output ubuntu.ext4 -- --components=main,universe --include=e2fsprogs --hook-dir=/usr/share/mmdebstrap/hooks/useradd --aptopt='Apt::Install-Recommends "true"' --include=linux-image-generic,task-gnome-desktop
@@ -45,10 +46,10 @@ The filesystem on ubuntu.ext4 is now 20971520 (1k) blocks long.
 $ 
 ```
 
-## Yubikey on host
+## Yubikey/Solokey on host
 
-When I insert the yubikey, I need to pass on USB details to the guest OS and
-to do that we need to know the bus and device/hostaddr, so:
+When I insert a yubikey/solokey, I need to pass on USB details to the guest OS
+and to do that we need to know the bus and device/hostaddr, so, e.g.:
 
 ```bash
 $ lsusb
@@ -60,10 +61,10 @@ Bus 001 Device 004: ID 1050:0407 Yubico.com Yubikey 4/5 OTP+U2F+CCID
 I have to be careful where the mouse focus is when near the Yubikey 4 nano as
 touching it, either in passing or when pulling it from the USB socket generates
 some garbage looking text on (I guess) stdin - in one case that deleted a
-message from my mail client:-)
+message from my mail client:-) That doesn't seem to happen with the solokey.
 
-Extracting the yubikey with this setup seems to require rebooting the guest VM
-to see the device again.
+Extracting the yubikey/solokey with this setup seems to require rebooting the
+guest VM to allow it see the device again.
 
 ## Running the guest
 
@@ -85,34 +86,17 @@ it turns out adding the following seems to fix this:
 ```
 
 After basic packages are installed and the SSH server is running I'm currently
-starting the guest VM via:
+starting the guest VM via, e.g.:
 
 ```bash
 $ debvm-run -g -s 2222 -i ubuntu.ext4 -- -m 16G -usb -device usb-host,hostbus=1,hostaddr=4
 ```
 
-The USB details above allow the guest to access the Yubikey. Note that those
-will change as you (dis/re)connect USB devices so you probably have to check
+The USB details above allow the guest to access the yubikey/solokey. Note that
+those will change as you (dis/re)connect USB devices so you'd have to check
 `lsusb` for the `Bus/hostbus` and `Device/hostaddr` before each boot. As those
-values change, I wrote a script to grab 'em and pass 'em on to the guest:
-
-```bash
-#!/bin/bash
-
-# set -x
-
-function stripleadingzeros()
-{
-    echo $((10#$1))
-}
-
-HBUS=$(stripleadingzeros `lsusb | grep Yubico | awk '{print $2}'`)
-HADDR=$(stripleadingzeros `lsusb | grep Yubico | awk '{print $4}' | sed -e 's/://'`)
-
-debvm-run -g -s 2222 -i ubuntu.ext4 -- -m 16G \
-    -usb -device usb-host,hostbus=$HBUS,hostaddr=$HADDR \
-    -vga none -device virtio-vga-gl -display sdl,gl=on
-```
+values change, I wrote the [`bootvm.sh`](./bootvm.sh) script to grab 'em and
+pass 'em on to the guest:
 
 Then I can login as `user` via the graphics window, or SSH in via:
 
@@ -148,10 +132,51 @@ $ sudo apt install pcscd
 
 So... so far so good!
 
+## Solokeys in browser
+
+As it's always better to not be dependent on one vendor, I acquired a few
+[SoloKeys](https://solokeys.com) that also claim to be passkeys compatible.
+Bottom line: turns out that's true, for our scenario, which is nice!
+
+Solokeys are [open-source](https://github.com/solokeys) which is great, but the
+repos don't seem to be active, which is less good. It could be that the
+developers are focussing more on a "next gen" thing
+(called [trussed](https://github.com/trussed-dev)) that's also intended to work with
+[nitrokeys](https://www.nitrokey.com/), but "trussed" doesn't seem to have matured
+just yet, hard to tell.
+
+When I tried to use our python `mech_u2f.py register` before having set
+a PIN I got an exception (trace [here](./solo-no-pin-except.md) in
+case that's useful later).
+
+The SoloKey device (or something;-) insisted on setting a PIN the first time I
+tried it out via a browser (with the usual
+[test site](https://webauthn.io/profile)).  After that, our `mech_u2f.py` script
+works fine for registration and authentication with the device, prompting for
+PIN entry and then to touch the authenticator.
+
+There is a command line tool for SoloKeys, that first needs the
+rust environment installed, then the tool itself. The online
+documentation (that I found) wasn't quite correct but what worked
+for me is below:
+
+```bash
+$ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+...
+$ sudo apt install libusb-dev libudev-dev libpcsclite-dev
+$ . $HOME/.cargo/env
+$ cargo init
+$ cargo install solo2
+```
+
+That all seems to work, though the `solo2` tool doesn't do so much
+that's useful for my purposes, e.g. I've yet to find a way to unset
+the PIN.
+
 ## DNS and PKI
  
 I needed a DNS name for the guest VM so I used `pk.jell.ie` (`jell.ie` is a
-vanity domain I do control) and added that to `/etc/hosts` in the guest with
+vanity domain I control) and added that to `/etc/hosts` in the guest with
 a localhost IP. I also needed a fake CA that mail and web clients can believe.
 
 From another project I used a bash script
@@ -194,7 +219,7 @@ $  EXTRA_CFLAGS=-O0 CPPFLAGS=-I$HOME/code/openssl-local-inst/include LDFLAGS=-L$
 $ make -j8
 ```
 
-The build is somewhat odd - it sometimes fails but then succeeds on a 2nd
+The dovecot build is somewhat odd - it sometimes fails but then succeeds on a 2nd
 attempt. Haven't investigated, but the error seems to be some test checking
 online for something thing, so we'll see.
 
@@ -209,6 +234,31 @@ guest was finickkity, but copying from other setups eventually worked.  That
 setup can send mail externally or to itself, and thunderbird can do IMAP
 operations, so I should be able to play with SASL autentication for submission
 and IMAP operations.
+
+The postfix `main.cf` config things I changed are below
+(I think;-):
+
+```bash
+mydestination = pk.jell.ie, $myhostname, localhost, localhost.localdomain, localhost
+myhostname = pk.jell.ie
+mynetworks = 127.0.0.0/8 [::ffff:127.0.0.0]/104 [::1]/128
+smtpd_sasl_type = dovecot
+smtpd_tls_cert_file = /etc/dovecot/private/pk.jell.ie.pem
+smtpd_tls_key_file = /etc/dovecot/private/pk.jell.ie.priv
+virtual_transport = lmtp:unix:private/dovecot-lmtp
+```
+
+And (I think, again;-) the only change in `master.cf` was the addition of:
+
+```bash
+submission inet  n       -       -       -       -       smtpd
+    -o syslog_name=postfix/submission -o smtpd_tls_security_level=encrypt
+    -o smtpd_sasl_auth_enable=yes -o smtpd_sasl_type=dovecot
+    -o smtpd_sasl_path=private/auth -o smtpd_sasl_security_options=noanonymous
+    -o smtpd_sasl_local_domain= -o smtpd_client_restrictions=permit_sasl_authenticated,reject
+    -o smtpd_recipient_restrictions=reject_non_fqdn_recipient,reject_unknown_recipient_domain,permit_sasl_authenticated,reject
+    -o smtpd_relay_restrictions=permit_sasl_authenticated,rejec
+```
 
 ## Installing the local dovecot build 
 
@@ -229,52 +279,63 @@ I won't need to.
 My dovecot config is then:
 
 ```bash
-$ /usr/local/dovecot/sbin/dovecot -n
-$ sudo ./sbin/dovecot -n
-# 0.0.0-33418+f9bda94b25 (f9bda94b25): /usr/local/dovecot/etc/dovecot/dovecot.conf
-# OS: Linux 6.8.0-54-generic x86_64 Ubuntu 24.04.2 LTS 
+$ dovecot/sbin/dovecot -n
+# 0.0.0-35009+61e3708fb5 (b153621271): /usr/local/dovecot/etc/dovecot/dovecot.conf
+# OS: Linux 6.8.0-55-generic x86_64 Ubuntu 24.04.2 LTS 
 # Hostname: localhost
+# 4 default setting changes since version 0.0.0
 dovecot_config_version = 0.0.0
 dovecot_storage_version = 2.3.0
+mail_driver = sdbox
 mail_gid = mail
-mail_location = mbox:~/mail:INBOX=/var/mail/%u
+mail_path = ~/mail
 mail_uid = mail
 protocols = imap lmtp
 recipient_delimiter = +_
 ssl = required
-ssl_cert = </etc/dovecot/private/pk.jell.ie.pem
-ssl_key = # hidden, use -P to show it
 service auth {
-  name = auth
   unix_listener /var/spool/postfix/private/auth {
     group = postfix
     mode = 0660
-    path = /var/spool/postfix/private/auth
     user = postfix
   }
 }
 service lmtp {
-  name = lmtp
   user = mail
   unix_listener /var/spool/postfix/private/dovecot-lmtp {
     group = postfix
     mode = 0600
-    path = /var/spool/postfix/private/dovecot-lmtp
     user = postfix
   }
 }
 protocol lmtp {
   postmaster_address = user@pk.jell.ie
 }
+dict dict {
+}
 passdb pdb {
   driver = pam
-  name = pdb
 }
 userdb udb {
   driver = passwd
-  name = udb
+}
+ssl_server {
+  cert_file = /etc/dovecot/private/pk.jell.ie.pem
+  key_file = /etc/dovecot/private/pk.jell.ie.priv
 }
 ```
+
+Note that the dovecot upstream seems to change fairly rapidly, e.g. the 
+name of the config entries for the TLS files changed between the first
+and second commits to this repo. I figured out the new names by moving
+`/usr/local/dovevot` aside, then doing another `make install` with 
+the latest upstream, which allowed me to see what was now expected to
+be in `/usr/local/dovecot/etc/dovecot/dovecot.conf`. Not sure if
+doing that'll be a common thing or exceptional.
+
+With the above setup, mail content is stored in `$HOME/mail/mailboxes/`
+in I'm not sure what format - not mbox or Maildir anyway, presumably
+something more modern.
 
 ## A PoC dovecot passkeys mechanism
 
@@ -291,83 +352,48 @@ $ cd dovecot-mech-passkey
 $ ./autogen.sh
 $ ./configure  --with-dovecot=../core
 $ make -j12
-...currently some errors, hopefully to be fixed next day or so...
+...currently some warnings but builds...
 ```
 
-I can now use a bit of python in that repo as a test:
+## Python client test
+
+I can use a bit of python in Aki's repo as a test, the
+example below uses a solokey (with a PIN) rather than the
+yubikey (without a PIN) but both work:
 
 ```bash
 $ python mech_u2f.py register
 DEBUG:PASSKEYAuthenticator:Use USB HID channel.
-CtapHidDevice('/dev/hidraw1')
+CtapHidDevice('/dev/hidraw0')
 DEBUG:PASSKEYAuthenticator:Use USB HID channel.
-CtapHidDevice('/dev/hidraw1')
+CtapHidDevice('/dev/hidraw0')
 DEBUG:fido2.server:Fido2Server initialized for RP: PublicKeyCredentialRpEntity(name='Example RP', id='imap.example.com')
 DEBUG:fido2.server:Starting new registration, existing credentials: 
 DEBUG:fido2.client:Register a new credential for RP ID: imap.example.com
+Enter PIN: 
+DEBUG:fido2.ctap2.pin:Got PIN token for permissions: None
+DEBUG:fido2.ctap2.base:Calling CTAP2 make_credential
+DEBUG:fido2.hid:Got keepalive status: 01
+DEBUG:fido2.hid:Got keepalive status: 02
 
 Touch your authenticator device now...
 
-DEBUG:fido2.server:Verifying attestation of type fido-u2f
-INFO:fido2.server:New credential registered: d488a7bad3587265c5076027cb77ac2cf5e5162506340df5bb2ce31de5b015a2361a9e4e4e6d2c0ec16a20748cce0871c9abe47400947abdccc812085dc4c1cf
-{PASSKEY}AAAAAAAAAAAAAAAAAAAAAABA1IinutNYcmXFB2Any3esLPXlFiUGNA31uyzjHeWwFaI2Gp5OTm0sDsFqIHSMzghxyavkdACUer3MyBIIXcTBz6UBAgMmIAEhWCBJIZpSV9VBohhaqMkwH35econ1OVWOOE48vjnENI812yJYIG9gsNveRcXq86xzNayOFUgNRVVqNRgK592ts0PR+BB+
-$ 
-$ 
-$ python mech_u2f.py auth {PASSKEY}AAAAAAAAAAAAAAAAAAAAAABA1IinutNYcmXFB2Any3esLPXlFiUGNA31uyzjHeWwFaI2Gp5OTm0sDsFqIHSMzghxyavkdACUer3MyBIIXcTBz6UBAgMmIAEhWCBJIZpSV9VBohhaqMkwH35econ1OVWOOE48vjnENI812yJYIG9gsNveRcXq86xzNayOFUgNRVVqNRgK592ts0PR+BB+
-DEBUG:PASSKEYAuthenticator:Use USB HID channel.
-CtapHidDevice('/dev/hidraw1')
-DEBUG:fido2.server:Fido2Server initialized for RP: PublicKeyCredentialRpEntity(name='Example RP', id='imap.example.com')
-DEBUG:fido2.server:Starting new authentication, for credentials: d488a7bad3587265c5076027cb77ac2cf5e5162506340df5bb2ce31de5b015a2361a9e4e4e6d2c0ec16a20748cce0871c9abe47400947abdccc812085dc4c1cf
-DEBUG:fido2.client:Assert a credential for RP ID: imap.example.com
+DEBUG:fido2.hid:Got keepalive status: 01
+DEBUG:fido2.hid:Got keepalive status: 01
+DEBUG:fido2.hid:Got keepalive status: 01
+DEBUG:fido2.hid:Got keepalive status: 01
+DEBUG:fido2.hid:Got keepalive status: 01
+DEBUG:fido2.server:Verifying attestation of type packed
+INFO:fido2.server:New credential registered: a300589ee0f0b3c58410d3c4058a4589171f5564949ea5d6693452d67142f01315cdaea3f18381ccbbafcf20c23aa29d866b061509aba7d16937b1bff3a3561a4f1f6f21847edfeeb9e987aaab8dc04559b4ba3c22fe644d52a276fa28ae328de3447b8ddfea942e9487e168dc2f70d121a5ca2dc9d8dd5d4a3d0d9534d9f9aedefd36c1e7683fef4ba8e5818c55bbcab87439dfa916339ff67c8d4b99252a4f8a79014cf37608acbb9b1d0cd19c4fb902502f75ea123e6f1c7c026c833275f1bad4
+{PASSKEY}i8VJaAexTV+ySWB/XVJ9ogDCowBYnuDws8WEENPEBYpFiRcfVWSUnqXWaTRS1nFC8BMVza6j8YOBzLuvzyDCOqKdhmsGFQmrp9FpN7G/86NWGk8fbyGEft/uuemHqquNwEVZtLo8Iv5kTVKidvoorjKN40R7jd/qlC6Uh+Fo3C9w0SGlyi3J2N1dSj0NlTTZ+a7e/TbB52g/70uo5YGMVbvKuHQ536kWM5/2fI1LmSUqT4p5AUzzdgisu5sdDNGcT7kCUC916hI+bxx8AmyDMnXxutSkAQEDJyAGIVggI7w2IZUEQDsDFSVvlro1HazmOkc7YFV3HQtrzWf07W8=
+user@pk:~/code/dovecot/dovecot-mech-passkey$ python mech_u2f.py auth {PASSKEY}i8VJaAexTV+ySWB/XVJ9ogDCowBYnuDws8WEENPEBYpFiRcfVWSUnqXWaTRS1nFC8BMVza6j8YOBzLuvzyDCOqKdhmsGFQmrp9FpN7G/86NWGk8fbyGEft/uuemHqquNwEVZtLo8Iv5kTVKidvoorjKN40R7jd/qlC6Uh+Fo3C9w0SGlyi3J2N1dSj0NlTTZ+a7e/TbB52g/70uo5YGMVbvKuHQ536kWM5/2fI1LmSUqT4p5AUzzdgisu5sdDNGcT7kCUC916hI+bxx8AmyDMnXxutSkAQEDJyAGIVggI7w2IZUEQDsDFSVvlro1HazmOkc7YFV3HQtrzWf07W8=
+CtapHidDevice('/dev/hidraw0')
+Enter PIN: 
 
 Touch your authenticator device now...
 
-INFO:fido2.server:Credential authenticated: d488a7bad3587265c5076027cb77ac2cf5e5162506340df5bb2ce31de5b015a2361a9e4e4e6d2c0ec16a20748cce0871c9abe47400947abdccc812085dc4c1cf
-```
+Authentication finished
 
-That needed a few minor edits from the repo's `mech_u2f.py` to work in my
-setup, the diff is:
-
-```bash
-
-diff --git a/mech_u2f.py b/mech_u2f.py
-index ab49e9a..543a419 100644
---- a/mech_u2f.py
-+++ b/mech_u2f.py
-@@ -99,7 +99,7 @@ def authn(data):
-         logging.error("Credential does not start with {PASSKEY}")
-         sys.exit(1)
-
--    mech = PASSKEYAuthenticator("user_id", appid="https://example.com")
-+    mech = PASSKEYAuthenticator("user_id", appid="https://imap.example.com")
-
-     user = mech("")
-
-@@ -107,12 +107,14 @@ def authn(data):
-
-     credential, _ = AttestedCredentialData.unpack_from(b64decode(data[9:]))
-     uv = "preferred"
--    server = Fido2Server({"id": "example.com", "name": "Example RP"}, attestation="direct")
-+    server = Fido2Server({"id": "imap.example.com", "name": "Example RP"}, attestation="direct")
-     request_options, state = server.authenticate_begin([credential], user_verification=uv)
-
-     result = cbor.decode(mech(cbor.encode(request_options.public_key)))
-+    # result = AuthenticatorAssertionResponse(client_data=result['clientDataJSON'], authenticator_data=result['authenticatorData'],
-+            # signature = result['signature'], credential_id=result['credentialId'], extension_results=result['extensionResults'])
-     result = AuthenticatorAssertionResponse(client_data=result['clientDataJSON'], authenticator_data=result['authenticatorData'],
--            signature = result['signature'], credential_id=result['credentialId'], extension_results=result['extensionResults'])
-+            signature = result['signature'], credential_id=result['credentialId'])
-
-
-     server.authenticate_complete(
-@@ -144,6 +146,7 @@ def reg():
-
-
- def main():
-+    logging.basicConfig(level=logging.DEBUG)
-     if len(sys.argv) < 2:
-         print("Usage: test.py auth <credential>|register")
-     elif sys.argv[1] == "auth" and len(sys.argv) > 2:
 ```
 
 ## A local passkeys registration site/relying party 
@@ -391,9 +417,8 @@ I've yet to get a passkeys reg/auth setup working with that nginx instance.
 
 ## State of play
 
-And that's where I'm at (as of 2025-03-12). Things to do in future are:
+And that's where I'm at (as of 2025-03-13). Things to do in future are:
 
-- rebase dovecot once the passkeys PoC is upstreamed some version of that
 - get the local nginx setup working for passkeys registration/auth
 - probably get some simple command line demo of the passkeys auth with dovecot
 - hack thunderbird to do the same (or some of it, or choose an easier IMAP
