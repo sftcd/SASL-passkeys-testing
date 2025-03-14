@@ -18,7 +18,7 @@ HBUS=$(stripleadingzeros `lsusb | grep Yubico | awk '{print $2}'`)
 HADDR=$(stripleadingzeros `lsusb | grep Yubico | awk '{print $4}' | sed -e 's/://'`)
 if [[ "$HBUS" != "" && "$HADDR" != "" ]]
 then
-    yuistr=" -usb -device usb-host,hostbus=$HBUS,hostaddr=$HADDR "
+    yubistr=" -usb -device usb-host,hostbus=$HBUS,hostaddr=$HADDR "
 fi
 
 # Pick up a solokey if one is there (see https://solokeys.eu/)

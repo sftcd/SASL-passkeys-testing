@@ -344,17 +344,6 @@ Aki Tuomi (impressively quickly) did up a
 of the passkeys authentication method for dovecot, so trying that
 made sense.
 
-```bash
-$ sudo apt install libfido2-dev libcbor-dev
-$ cd $HOME/code/dovecot
-$ git clone https://github.com/cmouse/dovecot-mech-passkey/
-$ cd dovecot-mech-passkey
-$ ./autogen.sh
-$ ./configure  --with-dovecot=../core
-$ make -j12
-...currently some warnings but builds...
-```
-
 ## Python client test
 
 I can use a bit of python in Aki's repo as a test, the
@@ -394,6 +383,71 @@ Touch your authenticator device now...
 
 Authentication finished
 
+```
+
+The registration output (`{PASSKEY}...`) can be saved as a credential
+and used in a test with the PoC code.
+
+## Building the PoC
+
+```bash
+$ sudo apt install libfido2-dev libcbor-dev
+$ cd $HOME/code/dovecot
+$ git clone https://github.com/cmouse/dovecot-mech-passkey/
+$ cd dovecot-mech-passkey
+$ ./autogen.sh
+$ ./configure  --with-dovecot=../core
+$ make -j12
+...currently some warnings but builds...
+```
+
+Then we can pass in the credential produced by `mech_u2f.py` and see
+how that goes. Currently, it looks ok for the yubikey but we get an
+error for the solokey that looks like an algorithm mis-match maybe.
+
+```
+$ ./src/test ~/cred-yubi4 
+Debug: got guid 00000000-0000-0000-0000-000000000000
+Debug: cred size = 64, size = 143
+Debug: Got credential id 33a280212144cdeef03fca17892f5f7f5a5a87e8be9478220a3b7b748bd654d23473ff671db8549c77b45ec552a8636bc6d11ec77ae397911878d005830125be
+Debug: item is 5
+Debug: key is 1
+Debug: Key type = 2
+Debug: item is 5
+Debug: key is 3
+Debug: algorithm = -7
+Debug: item is 5
+Debug: key is -1
+Debug: curve = 1
+Debug: item is 5
+Debug: key is -2
+Debug: x = 32 bytes
+Debug: item is 5
+Debug: key is -3
+Debug: y = 32 bytes
+Debug: R: a564727049646b6578616d706c652e636f6d696368616c6c656e676558203fd8753eb1003843287ee8ef84646982a2e07e8bf248c6850e8830caae8702796774696d656f75741b000000000000ea6070616c6c6f7743726564656e7469616c7381a2626964584033a280212144cdeef03fca17892f5f7f5a5a87e8be9478220a3b7b748bd654d23473ff671db8549c77b45ec552a8636bc6d11ec77ae397911878d005830125be64747970656a7075626c69632d6b65797075736572566572696669636174696f6e687265717569726564
+mech passkey ......................................................... : ok
+0 / 1 tests failed
+$ ./src/test ~/cred-solo 
+Debug: got guid 8bc54968-07b1-4d5f-b249-607f5d527da2
+Debug: cred size = 194, size = 238
+Debug: Got credential id a300589e0585c5e1d938355fb006ae2feacd37832493b6950f0aaed6d57719496a477b528b2b2c9be38ae743c6933223ca7fec4b276ed8ab6482d242cfa3edaac1f1304723997442d7a75fef01f9dd0054b62e4187df4c98ea0f92d2882d935ee12fa106c3e33b33dcbac8df0b48216bfb35e487a4a761bdcedbd2eac68801d0193ad78e261067fd40e37783cf6fdb0d6733fa879303aadb683ed1f2dbb263c19ec5014c7fadcc4a74eb4eb47a15cc9f0250e5a1c986e1c5f4376b5432a7631b5418
+Debug: item is 5
+Debug: key is 1
+Debug: Key type = 1
+Debug: item is 5
+Debug: key is 3
+Debug: algorithm = -8
+Debug: item is 5
+Debug: key is -1
+Debug: curve = 6
+Debug: item is 5
+Debug: key is -2
+Debug: x = 32 bytes
+Debug: error:08000066:elliptic curve routines::invalid encoding
+Debug: R: 
+mech passkey ......................................................... : ok
+0 / 1 tests failed
 ```
 
 ## A local passkeys registration site/relying party 
