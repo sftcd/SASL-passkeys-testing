@@ -8,9 +8,9 @@ As part of the work on
 [SASL Remember Me](https://datatracker.ietf.org/doc/draft-ietf-kitten-sasl-rememberme/)
 and [SASL Passkey](https://datatracker.ietf.org/doc/draft-bucksch-sasl-passkey/),
 I wanted to setup a test environment that wouldn't interere with my daily-driver
-desktop (Ubuntu 24.04), and that allows me to play with an old(ish) Yubikey 4 nano
-I had lying about, (firmware version 4.3.3), and some new solokeys I recently 
-acquired, so the plan was/is:
+desktop (Ubuntu 24.04), and that allows me to play with an old(ish) yubikey 4 nano
+I had lying about, (firmware version 4.3.3), and some new solokeys and yubikey
+5's I recently acquired, so the plan was/is:
 
 - setup a guest VM also running Ubuntu 24.04 with graphics (DONE)
 - figure out how to access the yubikey/solokey from the guest (DONE)
@@ -131,6 +131,12 @@ $ sudo apt install pcscd
 ```
 
 So... so far so good!
+
+With the yubikey 5 (firmware 5.7.1), the yubikey authenticator has a better
+user inferface - you can see and manage the passkeys (up to 100 allowed on the
+device I'm using). The yubikey 5 also seems to require a PIN before our
+`mech_u2f.py` script will work. That can be set via the yubikey authenticator.
+(And maybe also when accessing the passkey demo site, but didn't test that.)
 
 ## Solokeys in browser
 
@@ -449,6 +455,19 @@ Debug: R:
 mech passkey ......................................................... : ok
 0 / 1 tests failed
 ```
+
+The yubikey 5 seems to use the same algorithms as the yubikey 4 as
+shown above. 
+
+It looks like the `algorithm` is the difference here - `-7` is the
+[CBOR code point](https://www.iana.org/assignments/cose/cose.xhtml)
+for ES256 (or ECDSA with SHA-256), and `1` means NIST P256 for the curve,
+whereas `-8` is the CBOR code point for EdDSA, with `6` meaning ed25519 for the
+curve, so I guess the solokeys is using the latter and that's either not
+supported or configured in our dovecot build.
+
+I don't see a way to change algorithm/curve preferences (so far) with either
+yubikeys or solokeys.
 
 ## A local passkeys registration site/relying party 
 
